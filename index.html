@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ぷにぷにカート3D - 爽快ぷるぷる立体レースバトル (v1.0.0)</title>
+  <meta name="description" content="あたたかいおもちゃの世界を、ぷるぷるのカートで走り抜ける3Dレースゲーム！ドリフト慣性でコースを攻めろ！">
+  
+  <!-- Disable Browser Cache -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&family=M+PLUS+Rounded+1c:wght@300;500;800;900&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Three.js (3D WebGL Library via CDN) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <!-- Background Pattern -->
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow-peach" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow-maple" aria-hidden="true"></div>
+
+  <!-- Welcome / Lobby Screen -->
+  <main id="lobby-screen" class="screen active">
+    <!-- ミュートボタン -->
+    <button id="lobby-mute-btn" class="btn-mute-top glass" aria-label="音声をミュート">🔊</button>
+    
+    <div class="container">
+      <header class="game-header">
+        <div class="version-tag">ver 1.0.0</div>
+        <h1 class="logo-text">ぷにぷに<span>KART 3D</span></h1>
+        <p class="subtitle">おもちゃの3D世界を、ぷるぷるのカートで駆け抜けよう！</p>
+      </header>
+
+      <section class="menu-card glass">
+        <div class="how-to-play">
+          <h3>🏎️ 運転のしかた</h3>
+          <ul>
+            <li>**前進**: `↑`キー または `W`キー</li>
+            <li>**バック/ブレーキ**: `↓`キー または `S`キー</li>
+            <li>**ハンドル左右**: `←/→`キー または `A/D`キー</li>
+            <li>**ドリフト (滑るコーナリング)**: スピードを出した状態で、曲がりたい方向にハンドルを切りながら **`Space`（スペース）キー** を長押し！</li>
+            <li>コースの外に落ちるとリスポーン（復活）します。コインを拾いながらコースを1周してゴールを目指そう！</li>
+          </ul>
+        </div>
+
+        <div class="stats-overview glass-light">
+          <span class="stats-title">★ ベストタイム ★</span>
+          <div class="stats-grid">
+            <div class="stat-item-row">
+              <span class="stat-lbl">🏁 コース 1</span>
+              <span id="best-time-1" class="stat-val">--:--.--</span>
+            </div>
+            <div class="stat-item-row">
+              <span class="stat-lbl">🍪 コース 2 (ロック中)</span>
+              <span id="best-time-2" class="stat-val">--:--.--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- コース選択 ＆ 即スタートボタン -->
+        <div class="start-actions-container">
+          <button class="btn-start course1" data-course="1">
+            <span class="btn-icon">🏁</span>
+            <div class="btn-text-group">
+              <span class="btn-title">コース1: ビギナーサーキット</span>
+              <span class="btn-sub">まずはここから！基本のループコース</span>
+            </div>
+          </button>
+          
+          <button class="btn-start course2 disabled" disabled>
+            <span class="btn-icon">🍪</span>
+            <div class="btn-text-group">
+              <span class="btn-title">コース2: メープルクッキーマウンテン</span>
+              <span class="btn-sub">起伏のあるお菓子の丘 (次回アップデート！)</span>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <footer class="lobby-footer">
+        <p>© 2026 PuniPuni Kart 3D. 3D WebGL レースゲーム 🔊</p>
+      </footer>
+    </div>
+  </main>
+
+  <!-- Game Play Screen -->
+  <div id="game-screen" class="screen">
+    <!-- Main 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- HUD Overlay -->
+    <div class="game-hud-top">
+      <div class="hud-item glass">
+        <span class="hud-label">TIME</span>
+        <span id="time-val" class="hud-value">00:00.00</span>
+      </div>
+      <div class="hud-item glass">
+        <span class="hud-label">SPEED</span>
+        <span id="speed-val" class="hud-value">0 km/h</span>
+      </div>
+      <div class="hud-item glass">
+        <span class="hud-label">COINS</span>
+        <span id="coin-val" class="hud-value">0</span>
+      </div>
+      <!-- ミュートボタン -->
+      <button id="game-mute-btn" class="btn-mute-top glass" aria-label="音声をミュート">🔊</button>
+      <button id="quit-btn" class="btn-icon glass" aria-label="もどる">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Speed Lines Effect Overlay -->
+    <div id="speed-lines" class="speed-lines-effect"></div>
+
+    <!-- Goal / Lap Message -->
+    <div id="lap-message" class="lap-msg-container"></div>
+  </div>
+
+  <!-- Game Over / Result Dialog -->
+  <dialog id="gameover-dialog" class="result-dialog glass">
+    <div class="dialog-content">
+      <div class="result-badge">🎉 GOAL! 🎉</div>
+      <h2 class="dialog-title">チェッカーフラッグ！</h2>
+      <p class="dialog-subtitle">コースを完走しました！</p>
+      
+      <div class="result-score-container">
+        <div class="result-stat-item">
+          <span class="result-stat-label">ゴールタイム</span>
+          <span id="result-time" class="result-stat-value">00:00.00</span>
+        </div>
+        <div class="result-stat-item">
+          <span class="result-stat-label">集めたコイン</span>
+          <span id="result-coins" class="result-stat-value">0</span>
+        </div>
+      </div>
+
+      <div class="result-message-box glass-light">
+        <p id="result-text-msg">素晴らしい走りでした！次はもっとタイムを縮めてみよう！</p>
+      </div>
+
+      <div class="dialog-actions">
+        <button id="restart-btn" class="btn-primary">もういっかい！</button>
+        <button id="share-btn" class="btn-secondary">タイムをコピー</button>
+      </div>
+    </div>
+  </dialog>
+  
+  <script src="app.js"></script>
+</body>
+</html>

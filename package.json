@@ -1,0 +1,13 @@
+{
+  "name": "punipuni-kart-3d",
+  "version": "1.0.0",
+  "description": "A sweet warm 3D kart racing game using Three.js",
+  "main": "app.js",
+  "scripts": {
+    "test": "node test_playwright.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
