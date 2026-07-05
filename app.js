@@ -28,11 +28,13 @@ const state = {
   coinsList: [], // コインの3Dオブジェクト
   dashPads: [], // ダッシュ床の3Dオブジェクト
   particles: [], // 煙パーティクル
+  rivals: [], // ライバルカートの配列 (AI)
+  playerT: 0, // プレイヤーの現在のコース位置(0.0〜1.0)
   
   // Kart Physics
   physics: {
     x: 0,
-    y: 8.4,
+    y: 12.4,
     z: 0,
     vx: 0,
     vy: 0,
@@ -216,6 +218,14 @@ function init3D() {
   spawnCoins();
   spawnDashPads();
   
+  // 6. Spawn Rivals (AI)
+  // スタートラインの後方に等間隔で配置
+  state.rivals = [
+    new RivalKart(0.97, 0x80ed99), // メロングリーン
+    new RivalKart(0.94, 0xfca311), // キャラメルプリン
+    new RivalKart(0.91, 0xb5179e)  // グレープパープル
+  ];
+  
   // カメラの初期位置をカートの背後に直接セットし、めり込みを防止
   const startBackOffset = new THREE.Vector3(0, 4.8, -12).applyQuaternion(state.kart.quaternion);
   state.camera.position.copy(state.kart.position).add(startBackOffset);
@@ -253,8 +263,8 @@ function buildCourse() {
   
   state.courseCurve = courseCurve;
   
-  // パスに沿って極太のチューブ/押し出しを作成して「道路」にする
-  const roadGeometry = new THREE.TubeGeometry(courseCurve, 100, 8, 16, true);
+  // パスに沿って極太のチューブ/押し出しを作成して「道路」にする (道路幅を 8 から 12 に拡張して広くする)
+  const roadGeometry = new THREE.TubeGeometry(courseCurve, 100, 12, 16, true);
   
   // 道路の材質（あたたかいビスケットアイボリー）
   const roadMaterial = new THREE.MeshStandardMaterial({
@@ -267,8 +277,8 @@ function buildCourse() {
   roadMesh.receiveShadow = true;
   roadGroup.add(roadMesh);
   
-  // 内外にキャラメル色の「縁取りライン」を描画
-  const outerLineGeometry = new THREE.TubeGeometry(courseCurve, 100, 8.5, 8, true);
+  // 内外にキャラメル色の「縁取りライン」を描画 (半径 12.5)
+  const outerLineGeometry = new THREE.TubeGeometry(courseCurve, 100, 12.5, 8, true);
   const outerLineMaterial = new THREE.MeshStandardMaterial({
     color: 0xf4a261, // アプリコット
     roughness: 0.5
@@ -276,8 +286,8 @@ function buildCourse() {
   const outerMesh = new THREE.Mesh(outerLineGeometry, outerLineMaterial);
   roadGroup.add(outerMesh);
   
-  // スタート/ゴール地点のチェッカー模様の表示
-  const startPlateGeo = new THREE.BoxGeometry(17, 0.2, 3);
+  // スタート/ゴール地点のチェッカー模様の表示 (道幅に合わせて 25 に拡張)
+  const startPlateGeo = new THREE.BoxGeometry(25, 0.2, 3);
   const startPlateMat = new THREE.MeshStandardMaterial({
     color: 0xe76f51, // テラコッタ
     roughness: 0.8
@@ -357,8 +367,8 @@ function buildKart() {
     state.wheels.push(wheel);
   });
   
-  // 初期位置設定（スタートライン・道路の天頂 Y=8.4）
-  state.kart.position.set(0, 8.4, 0);
+  // 初期位置設定（スタートライン・道路の天頂 Y=12.4）
+  state.kart.position.set(0, 12.4, 0);
   state.scene.add(state.kart);
   
   // コースのスタート地点での接線方向を向かせる
@@ -367,7 +377,7 @@ function buildKart() {
   
   // 物理の初期化
   state.physics.x = 0;
-  state.physics.y = 8.4;
+  state.physics.y = 12.4;
   state.physics.z = 0;
   state.physics.angle = initialAngle; // コース順路に向ける
   state.kart.rotation.y = initialAngle;
@@ -394,9 +404,9 @@ function spawnCoins() {
     const pos = state.courseCurve.getPointAt(t);
     const coin = new THREE.Mesh(coinGeo, coinMat);
     
-    // チューブの天頂(Y=8.0)より少し浮かせ、影を落とす
+    // チューブの天頂(Y=12.0)より少し浮かせ、影を落とす
     coin.position.copy(pos);
-    coin.position.y += 9.0; 
+    coin.position.y += 13.0; 
     coin.castShadow = true;
     
     state.scene.add(coin);
@@ -425,7 +435,7 @@ function spawnDashPads() {
     
     // コースの天頂にピッタリ重ねる
     pad.position.copy(pos);
-    pad.position.y += 8.08;
+    pad.position.y += 12.08;
     
     // コースの進行方向に角度を合わせる
     const tangent = state.courseCurve.getTangentAt(t);
@@ -435,6 +445,131 @@ function spawnDashPads() {
     state.scene.add(pad);
     state.dashPads.push(pad);
   });
+}
+
+// --- Rival Cart (AI対戦カート) ---
+class RivalKart {
+  constructor(tOffset, colorHex = 0x80ed99) {
+    this.t = tOffset; // 初期位置(割合)
+    this.speed = 0.00075;
+    this.baseSpeed = 0.00075 + Math.random() * 0.0001; // ライバルごとの個性
+    this.color = colorHex;
+    this.mesh = new THREE.Group();
+    this.wheels = [];
+    this.buildMesh();
+    state.scene.add(this.mesh);
+  }
+  
+  buildMesh() {
+    // 1. ボディ
+    const bodyGeo = new THREE.BoxGeometry(1.6, 0.6, 2.4);
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: this.color,
+      roughness: 0.2,
+      metalness: 0.1
+    });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.45;
+    body.castShadow = true;
+    this.mesh.add(body);
+    
+    // 2. カウル
+    const glassGeo = new THREE.BoxGeometry(1.4, 0.4, 0.6);
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0xcaf0f8,
+      transparent: true,
+      opacity: 0.6
+    });
+    const windshield = new THREE.Mesh(glassGeo, glassMat);
+    windshield.position.set(0, 0.85, 0.2);
+    this.mesh.add(windshield);
+    
+    // 3. ライト
+    const lightGeo = new THREE.SphereGeometry(0.18, 8, 8);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xffe53b });
+    const lightL = new THREE.Mesh(lightGeo, lightMat);
+    lightL.position.set(-0.6, 0.45, 1.2);
+    const lightR = new THREE.Mesh(lightGeo, lightMat);
+    lightR.position.set(0.6, 0.45, 1.2);
+    this.mesh.add(lightL);
+    this.mesh.add(lightR);
+    
+    // 4. マフラー
+    const mufflerGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.4, 8);
+    mufflerGeo.rotateX(Math.PI / 2);
+    const mufflerMat = new THREE.MeshStandardMaterial({ color: 0x4a3e3d });
+    const muffler = new THREE.Mesh(mufflerGeo, mufflerMat);
+    muffler.position.set(0, 0.3, -1.25);
+    this.mesh.add(muffler);
+    
+    // 5. タイヤ (4つ)
+    const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12);
+    wheelGeo.rotateZ(Math.PI / 2);
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x4a3e3d, roughness: 0.9 });
+    
+    const pos = [
+      { x: -0.9, y: 0.38, z: 0.8 },
+      { x: 0.9, y: 0.38, z: 0.8 },
+      { x: -0.9, y: 0.38, z: -0.8 },
+      { x: 0.9, y: 0.38, z: -0.8 }
+    ];
+    
+    pos.forEach(p => {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.position.set(p.x, p.y, p.z);
+      wheel.castShadow = true;
+      this.mesh.add(wheel);
+      this.wheels.push(wheel);
+    });
+  }
+  
+  update(playerT) {
+    // ラバーバンドAI (プレイヤーとの距離に応じた自動追いつき・手加減補正)
+    let tDiff = playerT - this.t;
+    if (tDiff < -0.5) tDiff += 1.0;
+    if (tDiff > 0.5) tDiff -= 1.0;
+    
+    let speedMult = 1.0;
+    if (tDiff > 0.05) {
+      speedMult = 1.25; // 追い上げ
+    } else if (tDiff < -0.05) {
+      speedMult = 0.85; // 手加減
+    }
+    
+    this.speed = this.baseSpeed * speedMult;
+    this.t += this.speed;
+    if (this.t > 1.0) this.t -= 1.0;
+    
+    // 3D座標の更新
+    const pos = state.courseCurve.getPointAt(this.t);
+    const tangent = state.courseCurve.getTangentAt(this.t);
+    
+    this.mesh.position.copy(pos);
+    this.mesh.position.y = 12.4;
+    
+    // コースに沿って進行方向に向ける
+    const angle = Math.atan2(tangent.x, tangent.z);
+    this.mesh.rotation.y = angle;
+    
+    // タイヤ回転
+    this.wheels.forEach(w => {
+      w.rotation.x += this.speed * 85;
+    });
+    
+    // ぷるぷる揺れ
+    const body = this.mesh.children[0];
+    if (body) {
+      body.scale.y = 1.0 + Math.sin(performance.now() * 0.035) * 0.04;
+    }
+    
+    // 煙パーティクル噴射
+    if (Math.random() < 0.22) {
+      const backOffset = new THREE.Vector3(0, 0.3, -1.2).applyQuaternion(this.mesh.quaternion);
+      const sp = new SmokeParticle(pos.x + backOffset.x, 12.4 + backOffset.y, pos.z + backOffset.z, 0xdddddd, 0.2);
+      state.scene.add(sp);
+      state.particles.push(sp);
+    }
+  }
 }
 
 // --- Particles (煙・火花のエフェクト) ---
@@ -566,8 +701,8 @@ function updatePhysics() {
   const k = state.kart;
   if (!k) return;
   
-  // 1. カートがコースから落下しているかどうかの判定 (Y=8.4の道路から著しく落ちたとき)
-  if (p.y < 2.0) {
+  // 1. カートがコースから落下しているかどうかの判定 (Y=12.4の道路から著しく落ちたとき)
+  if (p.y < 5.0) {
     if (!p.isFalling) {
       p.isFalling = true;
       playSound('fall');
@@ -575,9 +710,9 @@ function updatePhysics() {
       
       // スタート位置にリスポーン
       setTimeout(() => {
-        k.position.set(0, 8.4, 0);
+        k.position.set(0, 12.4, 0);
         p.x = 0;
-        p.y = 8.4;
+        p.y = 12.4;
         p.z = 0;
         p.vx = 0;
         p.vy = 0;
@@ -657,8 +792,8 @@ function updatePhysics() {
     }
   }
   
-  // 道路の許容半径（道路幅は直径16/半径8なので、カート幅を考慮して6.0に設定）
-  const roadLimit = 6.0;
+  // 道路の許容半径（道路を広くしたため、12.0の幅に合わせて10.0に拡張）
+  const roadLimit = 10.0;
   
   if (closestDist > 0.1) {
     // 道路中心からカートへの方向ベクトル (法線)
@@ -689,8 +824,8 @@ function updatePhysics() {
     }
     
     // 3. 自動進路調整 (スマートステアリングアシスト)
-    // 中心線から 3.2 以上逸れたら、自動でコースの接線方向へ車の向きを徐々に補正する
-    if (closestDist > 3.2) {
+    // 道路拡張に合わせ、中心線から 6.0 以上逸れたら、自動でコースの接線方向へ車の向きを徐々に補正する
+    if (closestDist > 6.0) {
       const tangent = state.courseCurve.getTangentAt(closestT);
       const roadAngle = Math.atan2(tangent.x, tangent.z);
       
@@ -700,14 +835,17 @@ function updatePhysics() {
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       
       // コースをはみ出しそうになるほど強くハンドルアシストを介入させる
-      const assistStrength = (closestDist - 3.2) * 0.015;
+      const assistStrength = (closestDist - 6.0) * 0.015;
       p.angle += angleDiff * assistStrength;
     }
+    
+    // プレイヤーのコース上の現在位置(t)を記録して、ライバルAIが参照できるようにする
+    state.playerT = closestT;
   }
   
   // 簡易道路高さ合わせ (Y軸は地面の高さに追従する)
-  // プロトタイプコースは平面(Y=0, チューブ天頂Y=8.4)を想定
-  p.y = 8.4;
+  // プロトタイプコースは平面(Y=0, チューブ天頂Y=12.4)を想定
+  p.y = 12.4;
   
   k.position.set(p.x, p.y, p.z);
   
@@ -815,12 +953,45 @@ function checkCollisions() {
     }
   });
   
-  // 3. ゴールラインの検知 (スタートライン X=0付近, Z=0付近)
-  // カートが1周して戻ってきたかを判定
-  // 今回のループコースはZ正方向からZ負方向に回る
-  // x=0 付近、z=0 付近を横切った瞬間にラップアップ・ゴール判定
-  const distToStart = kp.distanceTo(new THREE.Vector3(0, 0.5, 0));
-  if (distToStart < 3.2 && state.gameState === 'playing' && performance.now() - state.startTime > 8000) {
+  // 3. カート同士の衝突判定 (プレイヤー vs ライバル)
+  if (state.rivals && state.rivals.length > 0) {
+    state.rivals.forEach(rival => {
+      const rp = rival.mesh.position;
+      const dist = kp.distanceTo(rp);
+      if (dist < 2.2) {
+        // 衝突！
+        playSound('hit', 1.2);
+        
+        // 反発方向ベクトル
+        const dx = kp.x - rp.x;
+        const dz = kp.z - rp.z;
+        const angle = Math.atan2(dx, dz);
+        
+        // 反発力
+        const pushForce = 0.25;
+        state.physics.vx += Math.sin(angle) * pushForce;
+        state.physics.vz += Math.cos(angle) * pushForce;
+        state.physics.speed *= 0.88; // 衝突減速
+        
+        // ぷるぷる変形
+        state.kart.children[0].scale.y = 0.65;
+        rival.mesh.children[0].scale.y = 0.65;
+        
+        // 衝突火花エフェクト
+        for (let i = 0; i < 6; i++) {
+          const hx = (kp.x + rp.x) / 2;
+          const hz = (kp.z + rp.z) / 2;
+          const sp = new SmokeParticle(hx, 12.4, hz, 0xff4d6d, 0.2);
+          state.scene.add(sp);
+          state.particles.push(sp);
+        }
+      }
+    });
+  }
+  
+  // 4. ゴールラインの検知 (スタートライン X=0付近, Z=0付近, Y=12.4基準に修正)
+  const distToStart = kp.distanceTo(new THREE.Vector3(0, 12.4, 0));
+  if (distToStart < 4.2 && state.gameState === 'playing' && performance.now() - state.startTime > 8000) {
     // 完走！ゴール！
     finishGame();
   }
@@ -881,6 +1052,12 @@ function quitGame() {
   state.gameState = 'lobby';
   document.getElementById('game-screen').classList.remove('active');
   document.getElementById('lobby-screen').classList.add('active');
+  
+  // ライバルカートのクリア
+  if (state.rivals) {
+    state.rivals.forEach(r => state.scene.remove(r.mesh));
+    state.rivals = [];
+  }
   
   // WebGLレンダラーを破棄してメモリリーク防止
   const container = document.getElementById('canvas-container');
@@ -973,6 +1150,13 @@ function animate() {
     updateCamera();
     checkCollisions();
     updateParticles();
+    
+    // ライバルAIカートの更新
+    if (state.rivals && state.rivals.length > 0) {
+      state.rivals.forEach(rival => {
+        rival.update(state.playerT || 0);
+      });
+    }
     
     // コインを自動でクルクル回転させる
     state.coinsList.forEach(c => {
