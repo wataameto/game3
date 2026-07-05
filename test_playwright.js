@@ -12,7 +12,7 @@ const path = require('path');
   
   // ブラウザ側のログをキャプチャ
   page.on('console', msg => console.log('[BROWSER LOG]', msg.type(), msg.text()));
-  page.on('pageerror', err => console.error('[BROWSER EXCEPTION]', err.message));
+  page.on('pageerror', err => console.error('[BROWSER EXCEPTION]', err.stack));
 
   console.log('Navigating to http://127.0.0.1:8083 ...');
   try {

@@ -458,6 +458,16 @@ class RivalKart {
     this.wheels = [];
     this.buildMesh();
     state.scene.add(this.mesh);
+    this.crashTimer = 0; // クラッシュタイマー (追突された時のスピン＆スタン用)
+    
+    // 初期位置と向きをセット (距離計算エラーを防止するため、生成直後から正しい3D位置を持つようにする)
+    if (state.courseCurve) {
+      const pos = state.courseCurve.getPointAt(this.t);
+      const tangent = state.courseCurve.getTangentAt(this.t);
+      this.mesh.position.copy(pos);
+      this.mesh.position.y = 12.4;
+      this.mesh.rotation.y = Math.atan2(tangent.x, tangent.z);
+    }
   }
   
   buildMesh() {
@@ -524,7 +534,41 @@ class RivalKart {
   }
   
   update(playerT) {
-    // ラバーバンドAI (プレイヤーとの距離に応じた自動追いつき・手加減補正)
+    // 1. クラッシュ中 (追突されてスタン中) の挙動
+    if (this.crashTimer > 0) {
+      this.crashTimer--;
+      // 速度を大幅に低下させる（ちょっと止まる）
+      this.speed = this.baseSpeed * 0.12;
+      this.t += this.speed;
+      if (this.t > 1.0) this.t -= 1.0;
+      
+      const pos = state.courseCurve.getPointAt(this.t);
+      const tangent = state.courseCurve.getTangentAt(this.t);
+      
+      this.mesh.position.copy(pos);
+      this.mesh.position.y = 12.4;
+      
+      // スピン演出 (Y軸を中心にクルクル回す)
+      const angle = Math.atan2(tangent.x, tangent.z);
+      this.mesh.rotation.y = angle + Math.sin(this.crashTimer * 0.3) * 1.5;
+      
+      // ボディをガタガタと歪ませる
+      const body = this.mesh.children[0];
+      if (body) {
+        body.scale.y = 1.0 + Math.sin(performance.now() * 0.1) * 0.25;
+      }
+      
+      // 黒い煙パーティクルを噴射
+      if (Math.random() < 0.5) {
+        const backOffset = new THREE.Vector3(0, 0.3, -1.2).applyQuaternion(this.mesh.quaternion);
+        const sp = new SmokeParticle(pos.x + backOffset.x, 12.4 + backOffset.y, pos.z + backOffset.z, 0x4a3e3d, 0.35); // ココアブラウン/グレーの煙
+        state.scene.add(sp);
+        state.particles.push(sp);
+      }
+      return;
+    }
+    
+    // 2. 通常時のラバーバンドAI (プレイヤーとの距離に応じた自動追いつき・手加減補正)
     let tDiff = playerT - this.t;
     if (tDiff < -0.5) tDiff += 1.0;
     if (tDiff > 0.5) tDiff -= 1.0;
@@ -738,6 +782,38 @@ function updatePhysics() {
     return;
   }
   
+  // 1.5. プレイヤーカートのクラッシュ処理 (追突されてスピン中)
+  if (p.crashTimer > 0) {
+    p.crashTimer--;
+    p.speed *= 0.85; // 急減速 (ちょっと止まる)
+    
+    // スピン運動の適用 (物理的な速度更新)
+    p.vx = Math.sin(p.angle) * p.speed;
+    p.vz = Math.cos(p.angle) * p.speed;
+    p.x += p.vx;
+    p.z += p.vz;
+    p.y = 12.4;
+    k.position.set(p.x, p.y, p.z);
+    
+    // 車体スピン演出（激しく回転）
+    k.rotation.y = p.angle + Math.sin(p.crashTimer * 0.3) * 1.5;
+    
+    // ボディのぷにぷにガタガタ歪み
+    const bodyMesh = k.children[0];
+    if (bodyMesh) {
+      bodyMesh.scale.y = 1.0 + Math.sin(performance.now() * 0.1) * 0.25;
+    }
+    
+    // クラッシュ黒煙
+    if (Math.random() < 0.5) {
+      const backOffset = new THREE.Vector3(0, 0.3, -1.2).applyQuaternion(k.quaternion);
+      const sp = new SmokeParticle(p.x + backOffset.x, p.y + backOffset.y, p.z + backOffset.z, 0x4a3e3d, 0.35);
+      state.scene.add(sp);
+      state.particles.push(sp);
+    }
+    return; // 操作を受け付けない
+  }
+  
   // 2. 前後移動の加速計算
   if (state.keys.forward) {
     p.speed = Math.min(p.maxSpeed, p.speed + p.accel);
@@ -783,11 +859,12 @@ function updatePhysics() {
   
   // コース上の100箇所をスキャンして最短距離の点を割り出す
   for (let t = 0; t <= 1.0; t += 0.01) {
-    const pt = state.courseCurve.getPointAt(t);
+    const clampedT = Math.min(1.0, Math.max(0.0, t));
+    const pt = state.courseCurve.getPointAt(clampedT);
     const dist = Math.hypot(p.x - pt.x, p.z - pt.z); // 平面での距離
     if (dist < closestDist) {
       closestDist = dist;
-      closestT = t;
+      closestT = clampedT;
       closestPoint.copy(pt);
     }
   }
@@ -953,35 +1030,78 @@ function checkCollisions() {
     }
   });
   
-  // 3. カート同士の衝突判定 (プレイヤー vs ライバル)
+  // 3. カート同士の衝突判定 (プレイヤー vs ライバル ＆ 追突クラッシュ判定)
   if (state.rivals && state.rivals.length > 0) {
     state.rivals.forEach(rival => {
       const rp = rival.mesh.position;
       const dist = kp.distanceTo(rp);
       if (dist < 2.2) {
-        // 衝突！
-        playSound('hit', 1.2);
+        playSound('hit', 1.25);
         
-        // 反発方向ベクトル
-        const dx = kp.x - rp.x;
-        const dz = kp.z - rp.z;
-        const angle = Math.atan2(dx, dz);
+        // 1. どちらが後ろからぶつかったか（追突）の判定
+        // プレイヤーの向きベクトル
+        const pDirX = Math.sin(state.physics.angle);
+        const pDirZ = Math.cos(state.physics.angle);
         
-        // 反発力
-        const pushForce = 0.25;
-        state.physics.vx += Math.sin(angle) * pushForce;
-        state.physics.vz += Math.cos(angle) * pushForce;
-        state.physics.speed *= 0.88; // 衝突減速
+        // ライバルの向きベクトル
+        const tangent = state.courseCurve.getTangentAt(rival.t);
+        const rDirAngle = Math.atan2(tangent.x, tangent.z);
+        const rDirX = Math.sin(rDirAngle);
+        const rDirZ = Math.cos(rDirAngle);
+        
+        // プレイヤーからライバルへの相対方向ベクトル
+        const dx = rp.x - kp.x;
+        const dz = rp.z - kp.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const ndx = dx / len;
+        const ndz = dz / len;
+        
+        // 内積計算 (正方向の重なり具合で前後関係を検知)
+        const pDot = pDirX * ndx + pDirZ * ndz; // プレイヤーがライバルを向いている
+        const rDot = rDirX * (-ndx) + rDirZ * (-ndz); // ライバルがプレイヤーを向いている
+        
+        if (pDot > 0.65 && !rival.isFalling && rival.crashTimer === 0) {
+          // ★ プレイヤーがライバルの「後ろ」から追突した！
+          // 前にいるライバルがクラッシュ ＆ 一時停止（失速）
+          rival.crashTimer = 35;
+          showFloatMessage("アタック成功！ 💥", '#80ed99');
+          
+          // 後ろのプレイヤーは弾かれて少し減速
+          state.physics.vx -= ndx * 0.15;
+          state.physics.vz -= ndz * 0.15;
+          state.physics.speed *= 0.72;
+        } else if (rDot > 0.65 && !state.physics.isFalling && state.physics.crashTimer === 0) {
+          // ★ ライバルがプレイヤーの「後ろ」から追突した！
+          // 前にいるプレイヤーがクラッシュ ＆ 一時停止（操作不能・スピン・失速）
+          state.physics.crashTimer = 35;
+          playSound('fall'); // クラッシュ用効果音
+          showFloatMessage("うしろからアタックされた！ 💦", '#ff4d6d');
+          
+          // 後ろのライバルは弾かれて少し減速
+          rival.speed *= 0.65;
+        } else {
+          // 横からの通常のぶつかり合い (お互いに均等に弾き飛ばしあう)
+          const angle = Math.atan2(ndx, ndz);
+          const pushForce = 0.22;
+          
+          state.physics.vx -= Math.sin(angle) * pushForce;
+          state.physics.vz -= Math.cos(angle) * pushForce;
+          state.physics.speed *= 0.85;
+          
+          // ライバルも少し押される
+          rival.t -= 0.003 * Math.sign(pDot);
+        }
         
         // ぷるぷる変形
-        state.kart.children[0].scale.y = 0.65;
-        rival.mesh.children[0].scale.y = 0.65;
+        state.kart.children[0].scale.y = 0.6;
+        rival.mesh.children[0].scale.y = 0.6;
         
-        // 衝突火花エフェクト
-        for (let i = 0; i < 6; i++) {
+        // 衝突スパーク ＆ クラッシュココア煙
+        for (let i = 0; i < 7; i++) {
           const hx = (kp.x + rp.x) / 2;
           const hz = (kp.z + rp.z) / 2;
-          const sp = new SmokeParticle(hx, 12.4, hz, 0xff4d6d, 0.2);
+          const color = (pDot > 0.65 || rDot > 0.65) ? 0x4a3e3d : 0xff4d6d; // 追突なら黒煙、通常なら赤スパーク
+          const sp = new SmokeParticle(hx, 12.4, hz, color, 0.22);
           state.scene.add(sp);
           state.particles.push(sp);
         }
