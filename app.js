@@ -640,6 +640,71 @@ function updatePhysics() {
   p.x += p.vx;
   p.z += p.vz;
   
+  // --- スマートハンドルアシスト & コース端スライドクランプ ---
+  // カートに最も近いコース中心線上の点(t)を探す
+  let closestDist = Infinity;
+  let closestT = 0;
+  const closestPoint = new THREE.Vector3();
+  
+  // コース上の100箇所をスキャンして最短距離の点を割り出す
+  for (let t = 0; t <= 1.0; t += 0.01) {
+    const pt = state.courseCurve.getPointAt(t);
+    const dist = Math.hypot(p.x - pt.x, p.z - pt.z); // 平面での距離
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestT = t;
+      closestPoint.copy(pt);
+    }
+  }
+  
+  // 道路の許容半径（道路幅は直径16/半径8なので、カート幅を考慮して6.0に設定）
+  const roadLimit = 6.0;
+  
+  if (closestDist > 0.1) {
+    // 道路中心からカートへの方向ベクトル (法線)
+    const nx = (p.x - closestPoint.x) / closestDist;
+    const nz = (p.z - closestPoint.z) / closestDist;
+    
+    // コースの端っこ（壁）に到達した場合
+    if (closestDist > roadLimit) {
+      // 1. 位置を限界距離に強制クランプ (コース外へのはみ出しを物理的にブロック)
+      p.x = closestPoint.x + nx * roadLimit;
+      p.z = closestPoint.z + nz * roadLimit;
+      
+      // 2. 速度の壁面スライド補正 (外向きの速度をゼロにし、壁に沿って滑り進ませる)
+      const dot = p.vx * nx + p.vz * nz;
+      if (dot > 0) {
+        p.vx -= nx * dot;
+        p.vz -= nz * dot;
+        p.speed *= 0.98; // 壁ずり摩擦減速
+      }
+      
+      // 火花エフェクト
+      if (Math.random() < 0.15 && Math.abs(p.speed) > 0.1) {
+        if (Math.random() < 0.3) playSound('drift', 0.2);
+        const sp = new SmokeParticle(p.x, p.y - 0.2, p.z, 0xfca311, 0.15); // 黄色い火花
+        state.scene.add(sp);
+        state.particles.push(sp);
+      }
+    }
+    
+    // 3. 自動進路調整 (スマートステアリングアシスト)
+    // 中心線から 3.2 以上逸れたら、自動でコースの接線方向へ車の向きを徐々に補正する
+    if (closestDist > 3.2) {
+      const tangent = state.courseCurve.getTangentAt(closestT);
+      const roadAngle = Math.atan2(tangent.x, tangent.z);
+      
+      // 角度の差分を -PI から PI の範囲に正規化
+      let angleDiff = roadAngle - p.angle;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      
+      // コースをはみ出しそうになるほど強くハンドルアシストを介入させる
+      const assistStrength = (closestDist - 3.2) * 0.015;
+      p.angle += angleDiff * assistStrength;
+    }
+  }
+  
   // 簡易道路高さ合わせ (Y軸は地面の高さに追従する)
   // プロトタイプコースは平面(Y=0, チューブ天頂Y=8.4)を想定
   p.y = 8.4;
