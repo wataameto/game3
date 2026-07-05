@@ -32,7 +32,7 @@ const state = {
   // Kart Physics
   physics: {
     x: 0,
-    y: 0.5,
+    y: 8.4,
     z: 0,
     vx: 0,
     vy: 0,
@@ -216,6 +216,10 @@ function init3D() {
   spawnCoins();
   spawnDashPads();
   
+  // カメラの初期位置をカートの背後に直接セットし、めり込みを防止
+  const startBackOffset = new THREE.Vector3(0, 4.8, -12).applyQuaternion(state.kart.quaternion);
+  state.camera.position.copy(state.kart.position).add(startBackOffset);
+  
   window.addEventListener('resize', onWindowResize);
 }
 
@@ -353,15 +357,20 @@ function buildKart() {
     state.wheels.push(wheel);
   });
   
-  // 初期位置設定（スタートライン）
-  state.kart.position.set(0, 0.5, 0);
+  // 初期位置設定（スタートライン・道路の天頂 Y=8.4）
+  state.kart.position.set(0, 8.4, 0);
   state.scene.add(state.kart);
+  
+  // コースのスタート地点での接線方向を向かせる
+  const tangent = state.courseCurve.getTangentAt(0);
+  const initialAngle = Math.atan2(tangent.x, tangent.z);
   
   // 物理の初期化
   state.physics.x = 0;
-  state.physics.y = 0.5;
+  state.physics.y = 8.4;
   state.physics.z = 0;
-  state.physics.angle = Math.PI; // コース順路に向ける
+  state.physics.angle = initialAngle; // コース順路に向ける
+  state.kart.rotation.y = initialAngle;
 }
 
 // 🪙 コース上に3Dコインを配置
@@ -385,9 +394,9 @@ function spawnCoins() {
     const pos = state.courseCurve.getPointAt(t);
     const coin = new THREE.Mesh(coinGeo, coinMat);
     
-    // コース面より少し浮かせ、影を落とす
+    // チューブの天頂(Y=8.0)より少し浮かせ、影を落とす
     coin.position.copy(pos);
-    coin.position.y += 1.0; 
+    coin.position.y += 9.0; 
     coin.castShadow = true;
     
     state.scene.add(coin);
@@ -414,9 +423,9 @@ function spawnDashPads() {
     const pos = state.courseCurve.getPointAt(t);
     const pad = new THREE.Mesh(padGeo, padMat);
     
-    // コースにピッタリ重ねる
+    // コースの天頂にピッタリ重ねる
     pad.position.copy(pos);
-    pad.position.y += 0.08;
+    pad.position.y += 8.08;
     
     // コースの進行方向に角度を合わせる
     const tangent = state.courseCurve.getTangentAt(t);
@@ -557,8 +566,8 @@ function updatePhysics() {
   const k = state.kart;
   if (!k) return;
   
-  // 1. カートがコースから落下しているかどうかの判定 (Y座標が急激に下がっているとき)
-  if (p.y < -6) {
+  // 1. カートがコースから落下しているかどうかの判定 (Y=8.4の道路から著しく落ちたとき)
+  if (p.y < 2.0) {
     if (!p.isFalling) {
       p.isFalling = true;
       playSound('fall');
@@ -566,15 +575,18 @@ function updatePhysics() {
       
       // スタート位置にリスポーン
       setTimeout(() => {
-        k.position.set(0, 0.5, 0);
+        k.position.set(0, 8.4, 0);
         p.x = 0;
-        p.y = 0.5;
+        p.y = 8.4;
         p.z = 0;
         p.vx = 0;
         p.vy = 0;
         p.vz = 0;
         p.speed = 0;
-        p.angle = Math.PI; // スタート向き
+        
+        const tangent = state.courseCurve.getTangentAt(0);
+        const initialAngle = Math.atan2(tangent.x, tangent.z);
+        p.angle = initialAngle; // スタート向き
         k.rotation.set(0, p.angle, 0);
         p.isFalling = false;
       }, 1000);
@@ -629,8 +641,8 @@ function updatePhysics() {
   p.z += p.vz;
   
   // 簡易道路高さ合わせ (Y軸は地面の高さに追従する)
-  // プロトタイプコースは平面(Y=0)を想定しているので、高さを0.5付近に固定
-  p.y = 0.5;
+  // プロトタイプコースは平面(Y=0, チューブ天頂Y=8.4)を想定
+  p.y = 8.4;
   
   k.position.set(p.x, p.y, p.z);
   
