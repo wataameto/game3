@@ -541,9 +541,11 @@ class RivalKart {
       this.speed = this.baseSpeed * 0.12;
       this.t += this.speed;
       if (this.t > 1.0) this.t -= 1.0;
+      if (this.t < 0.0) this.t += 1.0;
       
-      const pos = state.courseCurve.getPointAt(this.t);
-      const tangent = state.courseCurve.getTangentAt(this.t);
+      const clampedT = Math.min(1.0, Math.max(0.0, this.t));
+      const pos = state.courseCurve.getPointAt(clampedT);
+      const tangent = state.courseCurve.getTangentAt(clampedT);
       
       this.mesh.position.copy(pos);
       this.mesh.position.y = 12.4;
@@ -583,10 +585,12 @@ class RivalKart {
     this.speed = this.baseSpeed * speedMult;
     this.t += this.speed;
     if (this.t > 1.0) this.t -= 1.0;
+    if (this.t < 0.0) this.t += 1.0;
     
     // 3D座標の更新
-    const pos = state.courseCurve.getPointAt(this.t);
-    const tangent = state.courseCurve.getTangentAt(this.t);
+    const clampedT = Math.min(1.0, Math.max(0.0, this.t));
+    const pos = state.courseCurve.getPointAt(clampedT);
+    const tangent = state.courseCurve.getTangentAt(clampedT);
     
     this.mesh.position.copy(pos);
     this.mesh.position.y = 12.4;
@@ -1044,7 +1048,8 @@ function checkCollisions() {
         const pDirZ = Math.cos(state.physics.angle);
         
         // ライバルの向きベクトル
-        const tangent = state.courseCurve.getTangentAt(rival.t);
+        const clampedRivalT = Math.min(1.0, Math.max(0.0, rival.t));
+        const tangent = state.courseCurve.getTangentAt(clampedRivalT);
         const rDirAngle = Math.atan2(tangent.x, tangent.z);
         const rDirX = Math.sin(rDirAngle);
         const rDirZ = Math.cos(rDirAngle);
@@ -1090,6 +1095,8 @@ function checkCollisions() {
           
           // ライバルも少し押される
           rival.t -= 0.003 * Math.sign(pDot);
+          if (rival.t < 0.0) rival.t += 1.0;
+          if (rival.t > 1.0) rival.t -= 1.0;
         }
         
         // ぷるぷる変形
@@ -1107,6 +1114,87 @@ function checkCollisions() {
         }
       }
     });
+  }
+  
+  // 3.5. ライバルカート同士の衝突判定 (ライバルA vs ライバルB)
+  if (state.rivals && state.rivals.length > 1) {
+    for (let i = 0; i < state.rivals.length; i++) {
+      for (let j = i + 1; j < state.rivals.length; j++) {
+        const rA = state.rivals[i];
+        const rB = state.rivals[j];
+        
+        const posA = rA.mesh.position;
+        const posB = rB.mesh.position;
+        const dist = posA.distanceTo(posB);
+        
+        if (dist < 2.0) {
+          playSound('hit', 0.8); // 少し控えめな音量
+          
+          // ライバルAの進行方向
+          const clampedTA = Math.min(1.0, Math.max(0.0, rA.t));
+          const tangA = state.courseCurve.getTangentAt(clampedTA);
+          const dirAngleA = Math.atan2(tangA.x, tangA.z);
+          const dirAX = Math.sin(dirAngleA);
+          const dirAZ = Math.cos(dirAngleA);
+          
+          // ライバルBの進行方向
+          const clampedTB = Math.min(1.0, Math.max(0.0, rB.t));
+          const tangB = state.courseCurve.getTangentAt(clampedTB);
+          const dirAngleB = Math.atan2(tangB.x, tangB.z);
+          const dirBX = Math.sin(dirAngleB);
+          const dirBZ = Math.cos(dirAngleB);
+          
+          // AからBへの相対方向ベクトル
+          const dx = posB.x - posA.x;
+          const dz = posB.z - posA.z;
+          const len = Math.hypot(dx, dz) || 1;
+          const ndx = dx / len;
+          const ndz = dz / len;
+          
+          // 内積計算 (重なり具合で前後関係を検知)
+          const dotA = dirAX * ndx + dirAZ * ndz; // AがBを向いている
+          const dotB = dirBX * (-ndx) + dirBZ * (-ndz); // BがAを向いている
+          
+          let collisionType = 'normal';
+          
+          if (dotA > 0.65 && rB.crashTimer === 0) {
+            // AがBに追突！ 前のBがクラッシュ
+            rB.crashTimer = 35;
+            rA.speed *= 0.72;
+            collisionType = 'rear-end';
+          } else if (dotB > 0.65 && rA.crashTimer === 0) {
+            // BがAに追突！ 前のAがクラッシュ
+            rA.crashTimer = 35;
+            rB.speed *= 0.72;
+            collisionType = 'rear-end';
+          } else {
+            // 横からの衝突 ➡ 進捗 t をお互いに弾き合う
+            const pushAmt = 0.002;
+            rA.t -= pushAmt * Math.sign(dotA || 1);
+            rB.t += pushAmt * Math.sign(dotA || 1);
+            
+            if (rA.t < 0.0) rA.t += 1.0;
+            if (rA.t > 1.0) rA.t -= 1.0;
+            if (rB.t < 0.0) rB.t += 1.0;
+            if (rB.t > 1.0) rB.t -= 1.0;
+          }
+          
+          // ぷるぷる変形
+          rA.mesh.children[0].scale.y = 0.6;
+          rB.mesh.children[0].scale.y = 0.6;
+          
+          // 衝突スパーク ＆ クラッシュ黒煙
+          for (let k = 0; k < 5; k++) {
+            const hx = (posA.x + posB.x) / 2;
+            const hz = (posA.z + posB.z) / 2;
+            const color = (collisionType === 'rear-end') ? 0x4a3e3d : 0xff4d6d;
+            const sp = new SmokeParticle(hx, 12.4, hz, color, 0.2);
+            state.scene.add(sp);
+            state.particles.push(sp);
+          }
+        }
+      }
+    }
   }
   
   // 4. ゴールラインの検知 (スタートライン X=0付近, Z=0付近, Y=12.4基準に修正)
